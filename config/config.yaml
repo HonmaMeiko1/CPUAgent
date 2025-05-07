@@ -1,0 +1,100 @@
+# Spark配置
+spark:
+  master_url: "yarn"  # YARN模式
+  # 集群节点配置
+  nodes:
+    - hostname: "Worker1"  # 主节点
+      ip: "192.168.10.11"  
+    - hostname: "Worker2"  # 工作节点1
+      ip: "192.168.10.12"  
+    - hostname: "Worker3"  # 工作节点2
+      ip: "192.168.10.13"  
+  # HiBench配置
+  hibench:
+    workload_type: "micro"  # 工作负载类型：micro, ml, sql, graph, streaming
+    workload_name: "wordcount"  # 工作负载名称
+    data_scale: "large"  # 数据规模：tiny, small, large, huge, gigantic
+    prepare_data: true  # 是否自动准备数据
+    hibench_home: "/usr/local/hibench"  # HiBench安装路径
+
+# 训练配置
+training:
+  episodes: 100  # 建议先用较小的回合数测试
+  max_steps: 100  # 每回合最大步数
+  save_interval: 10  # 模型保存间隔
+  target_update: 10  # 目标网络更新间隔
+  update_interval: 20  # PPO策略更新间隔
+  convergence_window: 10  # 收敛检测窗口大小
+  convergence_threshold: 0.01  # 收敛阈值
+  # HiBench训练配置
+  hibench_training:
+    workloads:  # 用于训练的工作负载列表
+      - name: "wordcount"
+        scale: "tiny"
+      - name: "sort"
+        scale: "tiny"
+      - name: "terasort"
+        scale: "tiny"
+    iterations: 3  # 每个工作负载的重复次数
+
+# 推理配置
+inference:
+  max_steps: 100  # 最大推理步数
+  action_interval: 1.0  # 动作执行间隔（秒）
+  # HiBench推理配置
+  hibench_inference:
+    workload_name: "wordcount"  # 用于推理的工作负载
+    data_scale: "small"  # 推理数据规模
+    iterations: 1  # 推理重复次数
+
+# DQN配置
+dqn:
+  learning_rate: 0.001  # 学习率
+  gamma: 0.99  # 折扣因子
+  epsilon: 1.0  # 初始探索率
+  epsilon_min: 0.01  # 最小探索率
+  epsilon_decay: 0.995  # 探索率衰减
+  memory_size: 10000  # 经验回放缓冲区大小
+  batch_size: 64  # 批次大小
+
+# PPO配置
+ppo:
+  learning_rate: 0.0003  # 学习率
+  gamma: 0.99  # 折扣因子
+  gae_lambda: 0.95  # GAE-Lambda参数
+  clip_ratio: 0.2  # PPO裁剪参数
+  value_coef: 0.5  # 价值损失系数
+  entropy_coef: 0.01  # 熵正则化系数
+
+# 监控配置
+monitor:
+  interval: 1.0  # 监控间隔（秒）
+  metrics:
+    - cpu_usage
+    - memory_usage
+    - power_consumption
+    - job_progress
+    - executor_status
+  node_metrics: true  # 是否监控所有节点
+
+# 控制配置
+control:
+  cpu:
+    min_frequency: 1200.00  # 最小CPU频率（MHz）
+    max_frequency: 2700.00  # 最大CPU频率（MHz）
+    frequency_step: 100  # 频率调整步长（MHz）
+    control_all_nodes: true  # 是否控制所有节点的CPU频率
+  memory:
+    power_modes:
+      - high_performance
+      - balanced
+      - power_save
+    default_mode: balanced  # 默认电源模式
+    control_all_nodes: true  # 是否控制所有节点的内存模式
+
+# 日志配置
+logging:
+  level: INFO  # 日志级别
+  file: "drl_energy_saving.log"  # 日志文件
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"  # 日志格式
+  node_logs: true  # 是否记录所有节点的日志 

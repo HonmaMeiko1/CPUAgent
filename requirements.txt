@@ -1,0 +1,11 @@
+# Python >= 3.7.1, < 3.10.0
+torch>=1.9.0
+numpy>=1.19.2
+gym>=0.17.3
+stable-baselines3>=1.5.0
+pyspark>=3.2.0
+psutil>=5.8.0
+pywin32>=300
+pandas>=1.3.0
+scikit-learn>=0.24.2
+matplotlib>=3.4.3 
