@@ -1,14 +1,14 @@
-# Spark配置
+# Spark环境配置
 spark:
   master_url: "yarn"  # YARN模式
   # 集群节点配置
   nodes:
     - hostname: "Worker1"  # 主节点
-      ip: "192.168.10.11"  
+      ip: "192.168.10.101"
     - hostname: "Worker2"  # 工作节点1
-      ip: "192.168.10.12"  
+      ip: "192.168.10.102"
     - hostname: "Worker3"  # 工作节点2
-      ip: "192.168.10.13"  
+      ip: "192.168.10.103"
   # HiBench配置
   hibench:
     workload_type: "micro"  # 工作负载类型：micro, ml, sql, graph, streaming
@@ -16,55 +16,75 @@ spark:
     data_scale: "large"  # 数据规模：tiny, small, large, huge, gigantic
     prepare_data: true  # 是否自动准备数据
     hibench_home: "/usr/local/hibench"  # HiBench安装路径
+    report_dir: "/usr/local/hibench/report"  # 报告目录
 
 # 训练配置
 training:
-  episodes: 100  # 建议先用较小的回合数测试
+  n_episodes: 1000  # 训练回合数
   max_steps: 100  # 每回合最大步数
-  save_interval: 10  # 模型保存间隔
-  target_update: 10  # 目标网络更新间隔
+  save_interval: 50  # 模型保存间隔
   update_interval: 20  # PPO策略更新间隔
-  convergence_window: 10  # 收敛检测窗口大小
-  convergence_threshold: 0.01  # 收敛阈值
   # HiBench训练配置
   hibench_training:
-    workloads:  # 用于训练的工作负载列表
+    workloads:
       - name: "wordcount"
-        scale: "tiny"
+        scale: "small"
       - name: "sort"
-        scale: "tiny"
+        scale: "small"
       - name: "terasort"
-        scale: "tiny"
+        scale: "small"
     iterations: 3  # 每个工作负载的重复次数
 
-# 推理配置
-inference:
-  max_steps: 100  # 最大推理步数
+# 测试配置
+testing:
+  n_episodes: 10  # 测试回合数
+  max_steps: 500  # 每回合最大步数
   action_interval: 1.0  # 动作执行间隔（秒）
-  # HiBench推理配置
-  hibench_inference:
-    workload_name: "wordcount"  # 用于推理的工作负载
-    data_scale: "small"  # 推理数据规模
-    iterations: 1  # 推理重复次数
+  # HiBench测试配置
+  hibench_testing:
+    workload_name: "wordcount"  # 用于测试的工作负载
+    data_scale: "small"  # 测试数据规模
+    iterations: 1  # 测试重复次数
 
-# DQN配置
-dqn:
-  learning_rate: 0.001  # 学习率
-  gamma: 0.99  # 折扣因子
-  epsilon: 1.0  # 初始探索率
-  epsilon_min: 0.01  # 最小探索率
-  epsilon_decay: 0.995  # 探索率衰减
-  memory_size: 10000  # 经验回放缓冲区大小
-  batch_size: 64  # 批次大小
-
-# PPO配置
+# PPO智能体配置
 ppo:
+  # 网络配置
+  network:
+    state_dim: 8  # 状态空间维度
+    action_dim: 16  # 动作空间维度
+    hidden_sizes: [128, 64]  # 隐藏层大小
+    activation: "relu"  # 激活函数
+  
+  # 训练参数
   learning_rate: 0.0003  # 学习率
   gamma: 0.99  # 折扣因子
   gae_lambda: 0.95  # GAE-Lambda参数
   clip_ratio: 0.2  # PPO裁剪参数
   value_coef: 0.5  # 价值损失系数
   entropy_coef: 0.01  # 熵正则化系数
+  batch_size: 64  # 批次大小
+  buffer_size: 2048  # 经验缓冲区大小
+  n_epochs: 10  # 每次更新的训练轮数
+
+# 环境配置
+environment:
+  # 状态空间配置
+  state_space:
+    cpu_metrics: true  # CPU相关指标
+    memory_metrics: true  # 内存相关指标
+    power_metrics: true  # 功耗相关指标
+    job_metrics: true  # 作业相关指标
+  
+  # 动作空间配置
+  action_space:
+    cpu_control: true  # CPU频率控制
+    memory_control: true  # 内存电源模式控制
+  
+  # 奖励配置
+  reward:
+    energy_weight: 0.6  # 能耗权重
+    performance_weight: 0.4  # 性能权重
+    time_penalty: 0.1  # 时间惩罚系数
 
 # 监控配置
 monitor:
@@ -80,21 +100,21 @@ monitor:
 # 控制配置
 control:
   cpu:
-    min_frequency: 1200.00  # 最小CPU频率（MHz）
-    max_frequency: 2700.00  # 最大CPU频率（MHz）
+    min_frequency: 1200  # 最小CPU频率（MHz）
+    max_frequency: 2700  # 最大CPU频率（MHz）
     frequency_step: 100  # 频率调整步长（MHz）
-    control_all_nodes: true  # 是否控制所有节点的CPU频率
+    control_all_cores: true  # 是否控制所有CPU核心
   memory:
     power_modes:
-      - high_performance
+      - performance
       - balanced
-      - power_save
+      - powersave
     default_mode: balanced  # 默认电源模式
-    control_all_nodes: true  # 是否控制所有节点的内存模式
 
 # 日志配置
 logging:
-  level: INFO  # 日志级别
-  file: "drl_energy_saving.log"  # 日志文件
+  log_dir: "logs"  # 日志目录
+  level: "INFO"  # 日志级别
+  log_file: "drl_energy_saving.log"  # 日志文件名
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"  # 日志格式
-  node_logs: true  # 是否记录所有节点的日志 
+  console_log: true  # 是否输出到控制台 

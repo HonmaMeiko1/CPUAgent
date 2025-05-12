@@ -3,6 +3,7 @@ import numpy as np
 from typing import Dict, List, Tuple, Any, Optional
 import logging
 import time
+from pathlib import Path
 from monitor.spark_monitor import SparkMonitor
 from monitor.system_monitor import SystemMonitor
 from monitor.hibench_monitor import HiBenchMonitor
@@ -19,6 +20,12 @@ class SparkEnv(gym.Env):
         """
         super().__init__()
         
+        # 初始化日志
+        self.logger = logging.getLogger(__name__)
+        
+        # 验证配置路径
+        self._validate_paths(config)
+        
         # 初始化监控器
         self.spark_monitor = SparkMonitor(config['spark'])
         self.system_monitor = SystemMonitor(config['monitoring'])
@@ -28,8 +35,8 @@ class SparkEnv(gym.Env):
         )
         
         # 初始化控制器
-        self.cpu_control = CPUControl(config['control'])
-        self.memory_control = MemoryControl(config['control'])
+        self.cpu_control = CPUControl()
+        self.memory_control = MemoryControl()
         
         # 环境配置
         self.config = config
@@ -41,7 +48,13 @@ class SparkEnv(gym.Env):
         self.current_iteration = 0
         
         # 定义动作空间和观察空间
-        self.action_space = gym.spaces.Discrete(9)  # 9种CPU频率组合
+        self.action_space = gym.spaces.Box(
+            low=np.array([0.0]),  # 最小CPU频率比例
+            high=np.array([1.0]),  # 最大CPU频率比例
+            shape=(1,),
+            dtype=np.float32
+        )
+        
         self.observation_space = gym.spaces.Box(
             low=-np.inf,
             high=np.inf,
@@ -49,7 +62,36 @@ class SparkEnv(gym.Env):
             dtype=np.float32
         )
         
-        self.logger = logging.getLogger(__name__)
+    def _validate_paths(self, config: Dict):
+        """验证配置中的路径（Linux系统适配）"""
+        paths_to_check = [
+            ('spark', 'home'),
+            ('spark', 'hibench', 'hibench_home'),
+            ('spark', 'hibench', 'report_path'),
+            ('monitoring', 'log_dir')
+        ]
+        
+        for path_keys in paths_to_check:
+            path_value = config
+            for key in path_keys:
+                path_value = path_value.get(key, {})
+            
+            if isinstance(path_value, str):
+                # 转换Windows路径为Linux路径
+                path_str = str(path_value).replace('\\', '/')
+                if ':' in path_str:  # 处理Windows驱动器号
+                    path_str = '/' + path_str.replace(':', '')
+                path = Path(path_str)
+                
+                if not path.exists():
+                    self.logger.warning(f"路径不存在: {path}")
+                    path.mkdir(parents=True, exist_ok=True)
+                    
+                # 设置适当的权限
+                try:
+                    path.chmod(0o755)  # rwxr-xr-x
+                except Exception as e:
+                    self.logger.warning(f"设置路径权限失败: {str(e)}")
         
     def reset(self) -> np.ndarray:
         """
@@ -74,24 +116,36 @@ class SparkEnv(gym.Env):
         # 获取初始状态
         return self._get_state()
         
-    def step(self, action: int) -> Tuple[np.ndarray, float, bool, Dict]:
+    def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, Dict]:
         """
         执行一步
         
         Args:
-            action: 动作索引
+            action: 动作值（CPU频率比例）
             
         Returns:
             Tuple[np.ndarray, float, bool, Dict]: (状态, 奖励, 是否结束, 信息)
         """
         self.current_step += 1
         
-        # 执行动作
-        cpu_freq = self._action_to_freq(action)
-        self.cpu_control.set_frequency(cpu_freq)
+        # 获取CPU频率范围（Linux系统适配）
+        cpu_info = self.cpu_control.get_current_cpu_state()
+        min_freq = cpu_info.get('min_frequency', 1200)  # 默认1.2GHz
+        max_freq = cpu_info.get('max_frequency', 3600)  # 默认3.6GHz
+        
+        # 将动作值转换为实际频率
+        target_freq = int(min_freq + action[0] * (max_freq - min_freq))
+        
+        # 使用Linux的cpufreq设置频率
+        try:
+            for cpu_path in Path('/sys/devices/system/cpu').glob('cpu[0-9]*/cpufreq/scaling_setspeed'):
+                with open(cpu_path, 'w') as f:
+                    f.write(str(target_freq * 1000))  # 转换为kHz
+        except Exception as e:
+            self.logger.warning(f"设置CPU频率失败: {str(e)}")
         
         # 等待动作生效
-        time.sleep(self.config['inference']['action_interval'])
+        time.sleep(self.config['inference'].get('action_interval', 1.0))
         
         # 获取新状态
         state = self._get_state()
@@ -108,7 +162,7 @@ class SparkEnv(gym.Env):
             'episode': self.current_episode,
             'workload': self.workloads[self.current_workload]['name'],
             'iteration': self.current_iteration,
-            'cpu_freq': cpu_freq
+            'cpu_freq': target_freq
         }
         
         return state, reward, done, info
@@ -131,12 +185,12 @@ class SparkEnv(gym.Env):
         
         # 构建状态向量
         state = np.array([
-            spark_metrics['executor_cores'],
-            spark_metrics['executor_memory'],
-            spark_metrics['driver_memory'],
-            system_metrics['cpu_usage'],
-            system_metrics['memory_usage'],
-            system_metrics['power_usage'],
+            spark_metrics.get('executor_cores', 0),
+            spark_metrics.get('executor_memory', 0),
+            spark_metrics.get('driver_memory', 0),
+            system_metrics.get('cpu_usage', 0),
+            system_metrics.get('memory_usage', 0),
+            system_metrics.get('power_usage', 0),
             workload_metrics.get('elapsed_time', 0),
             workload_metrics.get('memory_seconds', 0),
             workload_metrics.get('vcore_seconds', 0),
@@ -158,7 +212,7 @@ class SparkEnv(gym.Env):
         
         # 计算能量效率
         if workload_metrics.get('elapsed_time', 0) > 0:
-            energy_efficiency = system_metrics['power_usage'] / workload_metrics['elapsed_time']
+            energy_efficiency = system_metrics.get('power_usage', 0) / workload_metrics['elapsed_time']
         else:
             energy_efficiency = 0
             
@@ -171,7 +225,10 @@ class SparkEnv(gym.Env):
                 performance_penalty = (workload_metrics['elapsed_time'] - expected_time) / expected_time
                 
         # 计算资源利用率奖励
-        resource_reward = (system_metrics['cpu_usage'] + system_metrics['memory_usage']) / 2
+        resource_reward = (
+            system_metrics.get('cpu_usage', 0) + 
+            system_metrics.get('memory_usage', 0)
+        ) / 2
         
         # 总奖励
         reward = -energy_efficiency - performance_penalty + resource_reward
@@ -186,7 +243,7 @@ class SparkEnv(gym.Env):
             bool: 是否结束
         """
         # 检查步数限制
-        if self.current_step >= self.config['training']['max_steps']:
+        if self.current_step >= self.config['training'].get('max_steps', 1000):
             return True
             
         # 检查工作负载是否完成
@@ -196,38 +253,19 @@ class SparkEnv(gym.Env):
             
         return False
         
-    def _action_to_freq(self, action: int) -> float:
-        """
-        将动作转换为CPU频率
-        
-        Args:
-            action: 动作索引
-            
-        Returns:
-            float: CPU频率
-        """
-        # 9种频率组合
-        freqs = [
-            (2.0, 2.0),  # 全核心2.0GHz
-            (2.0, 1.5),  # 核心1: 2.0GHz, 核心2: 1.5GHz
-            (2.0, 1.0),  # 核心1: 2.0GHz, 核心2: 1.0GHz
-            (1.5, 2.0),  # 核心1: 1.5GHz, 核心2: 2.0GHz
-            (1.5, 1.5),  # 全核心1.5GHz
-            (1.5, 1.0),  # 核心1: 1.5GHz, 核心2: 1.0GHz
-            (1.0, 2.0),  # 核心1: 1.0GHz, 核心2: 2.0GHz
-            (1.0, 1.5),  # 核心1: 1.0GHz, 核心2: 1.5GHz
-            (1.0, 1.0)   # 全核心1.0GHz
-        ]
-        return freqs[action]
-        
     def close(self):
-        """关闭环境"""
-        self.hibench_monitor.cleanup()
-        self.spark_monitor.close()
-        self.system_monitor.close()
-        self.cpu_control.close()
-        self.memory_control.close()
-        
+        """清理环境（Linux系统适配）"""
+        try:
+            # 恢复默认CPU频率
+            for cpu_path in Path('/sys/devices/system/cpu').glob('cpu[0-9]*/cpufreq/scaling_governor'):
+                with open(cpu_path, 'w') as f:
+                    f.write('ondemand')  # 使用Linux默认的ondemand调频器
+                    
+            # 恢复默认内存设置
+            self.memory_control.optimize_memory_usage()
+        except Exception as e:
+            self.logger.error(f"清理环境时出错: {str(e)}")
+            
     def render(self, mode='human'):
         """
         渲染环境（可选）

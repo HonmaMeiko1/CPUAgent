@@ -1,11 +1,24 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from typing import List, Dict, Optional
-import os
+from pathlib import Path
 from datetime import datetime
+import logging
 
 class PlotUtils:
     """绘图工具类"""
+    
+    def __init__(self):
+        """初始化绘图工具"""
+        self.logger = logging.getLogger(__name__)
+        # 设置matplotlib后端为Agg，避免在无GUI环境下的问题
+        plt.switch_backend('Agg')
+        # 设置中文字体支持
+        try:
+            plt.rcParams['font.sans-serif'] = ['WenQuanYi Micro Hei', 'DejaVu Sans']
+            plt.rcParams['axes.unicode_minus'] = False
+        except Exception as e:
+            self.logger.warning(f"设置中文字体失败: {str(e)}")
     
     @staticmethod
     def plot_training_results(rewards: List[float], losses: List[float], 
@@ -23,7 +36,9 @@ class PlotUtils:
             save_dir: 保存目录
         """
         # 创建保存目录
-        os.makedirs(save_dir, exist_ok=True)
+        save_path = Path(save_dir)
+        save_path.mkdir(parents=True, exist_ok=True)
+        save_path.chmod(0o755)  # 设置目录权限
         
         # 创建图表
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
@@ -66,9 +81,14 @@ class PlotUtils:
         
         # 保存图表
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = os.path.join(save_dir, f'training_results_{algorithm}_{timestamp}.png')
-        plt.savefig(filename)
-        plt.close()
+        filename = save_path / f'training_results_{algorithm}_{timestamp}.png'
+        try:
+            plt.savefig(filename)
+            filename.chmod(0o644)  # 设置文件权限
+        except Exception as e:
+            logging.error(f"保存图表失败: {str(e)}")
+        finally:
+            plt.close()
         
     @staticmethod
     def plot_job_execution(job_progress: List[float], execution_time: List[float],
@@ -86,7 +106,9 @@ class PlotUtils:
             save_dir: 保存目录
         """
         # 创建保存目录
-        os.makedirs(save_dir, exist_ok=True)
+        save_path = Path(save_dir)
+        save_path.mkdir(parents=True, exist_ok=True)
+        save_path.chmod(0o755)  # 设置目录权限
         
         # 创建图表
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
@@ -129,9 +151,14 @@ class PlotUtils:
         
         # 保存图表
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = os.path.join(save_dir, f'job_execution_{algorithm}_{timestamp}.png')
-        plt.savefig(filename)
-        plt.close()
+        filename = save_path / f'job_execution_{algorithm}_{timestamp}.png'
+        try:
+            plt.savefig(filename)
+            filename.chmod(0o644)  # 设置文件权限
+        except Exception as e:
+            logging.error(f"保存图表失败: {str(e)}")
+        finally:
+            plt.close()
         
     @staticmethod
     def plot_comparison(results: Dict[str, Dict[str, List[float]]], 
@@ -145,7 +172,9 @@ class PlotUtils:
             save_dir: 保存目录
         """
         # 创建保存目录
-        os.makedirs(save_dir, exist_ok=True)
+        save_path = Path(save_dir)
+        save_path.mkdir(parents=True, exist_ok=True)
+        save_path.chmod(0o755)  # 设置目录权限
         
         # 为每个指标创建单独的图表
         for metric in metrics:
@@ -163,6 +192,11 @@ class PlotUtils:
             
             # 保存图表
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = os.path.join(save_dir, f'comparison_{metric}_{timestamp}.png')
-            plt.savefig(filename)
-            plt.close() 
+            filename = save_path / f'comparison_{metric}_{timestamp}.png'
+            try:
+                plt.savefig(filename)
+                filename.chmod(0o644)  # 设置文件权限
+            except Exception as e:
+                logging.error(f"保存图表失败: {str(e)}")
+            finally:
+                plt.close() 

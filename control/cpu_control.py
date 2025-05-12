@@ -1,73 +1,79 @@
-import wmi
+import os
 import logging
+import subprocess
 from typing import Dict, List
-import ctypes
-from ctypes import wintypes
+from pathlib import Path
 
 class CPUControl:
+    """Linux CPU控制器"""
+    
     def __init__(self):
-        """
-        初始化CPU控制器
-        """
-        self.wmi = wmi.WMI()
+        """初始化CPU控制器"""
         self.logger = logging.getLogger(__name__)
-        self._init_power_management()
+        self._init_cpu_management()
         
-    def _init_power_management(self):
-        """
-        初始化电源管理
-        """
+    def _init_cpu_management(self):
+        """初始化CPU管理"""
         try:
-            # 获取管理员权限
-            if not ctypes.windll.shell32.IsUserAnAdmin():
-                self.logger.warning("需要管理员权限来控制CPU频率")
+            # 检查是否有root权限
+            if os.geteuid() != 0:
+                self.logger.warning("需要root权限来控制CPU频率")
                 return
                 
-            # 获取电源计划
-            self.power_plans = {}
-            for plan in self.wmi.Win32_PowerPlan():
-                self.power_plans[plan.ElementName] = plan.InstanceID
+            # 检查cpufreq系统是否可用
+            self.cpu_dirs = list(Path('/sys/devices/system/cpu').glob('cpu[0-9]*'))
+            if not self.cpu_dirs:
+                raise RuntimeError("未找到CPU频率控制接口")
                 
+            # 获取可用的频率调节器
+            self.available_governors = self._get_available_governors()
+            
         except Exception as e:
-            self.logger.error(f"初始化电源管理失败: {str(e)}")
+            self.logger.error(f"初始化CPU管理失败: {str(e)}")
+            
+    def _get_available_governors(self) -> List[str]:
+        """获取可用的CPU频率调节器"""
+        try:
+            governor_path = self.cpu_dirs[0] / 'cpufreq/scaling_available_governors'
+            with open(governor_path, 'r') as f:
+                return f.read().strip().split()
+        except Exception:
+            return []
             
     def get_available_power_plans(self) -> List[str]:
-        """
-        获取可用的电源计划
+        """获取可用的电源计划（频率调节器）
         
         Returns:
-            List[str]: 电源计划名称列表
+            List[str]: 可用的频率调节器列表
         """
-        return list(self.power_plans.keys())
+        return self.available_governors
         
-    def set_power_plan(self, plan_name: str) -> bool:
-        """
-        设置电源计划
+    def set_power_plan(self, governor: str) -> bool:
+        """设置CPU频率调节器
         
         Args:
-            plan_name: 电源计划名称
+            governor: 频率调节器名称（如 'performance', 'powersave', 'ondemand'）
             
         Returns:
             bool: 是否设置成功
         """
         try:
-            if plan_name not in self.power_plans:
-                self.logger.error(f"电源计划 {plan_name} 不存在")
+            if governor not in self.available_governors:
+                self.logger.error(f"不支持的频率调节器: {governor}")
                 return False
                 
-            # 使用powercfg命令设置电源计划
-            import subprocess
-            plan_id = self.power_plans[plan_name].split('\\')[-1]
-            subprocess.run(['powercfg', '/setactive', plan_id], check=True)
+            for cpu_dir in self.cpu_dirs:
+                governor_path = cpu_dir / 'cpufreq/scaling_governor'
+                with open(governor_path, 'w') as f:
+                    f.write(governor)
             return True
             
         except Exception as e:
-            self.logger.error(f"设置电源计划失败: {str(e)}")
+            self.logger.error(f"设置频率调节器失败: {str(e)}")
             return False
             
     def set_cpu_frequency(self, frequency_mhz: int) -> bool:
-        """
-        设置CPU频率
+        """设置CPU频率
         
         Args:
             frequency_mhz: 目标频率（MHz）
@@ -76,23 +82,27 @@ class CPUControl:
             bool: 是否设置成功
         """
         try:
-            # 获取当前CPU信息
-            cpu = self.wmi.Win32_Processor()[0]
-            current_freq = cpu.CurrentClockSpeed
+            frequency_khz = frequency_mhz * 1000
             
-            if frequency_mhz > cpu.MaxClockSpeed:
-                self.logger.warning(f"目标频率 {frequency_mhz}MHz 超过最大频率 {cpu.MaxClockSpeed}MHz")
-                return False
+            for cpu_dir in self.cpu_dirs:
+                # 检查最大频率
+                max_freq_path = cpu_dir / 'cpufreq/cpuinfo_max_freq'
+                with open(max_freq_path, 'r') as f:
+                    max_freq = int(f.read().strip())
+                    
+                if frequency_khz > max_freq:
+                    self.logger.warning(f"目标频率 {frequency_mhz}MHz 超过最大频率 {max_freq/1000}MHz")
+                    return False
+                    
+                # 设置最大和最小频率
+                scaling_max_path = cpu_dir / 'cpufreq/scaling_max_freq'
+                scaling_min_path = cpu_dir / 'cpufreq/scaling_min_freq'
                 
-            # 使用powercfg命令设置CPU频率
-            import subprocess
-            subprocess.run([
-                'powercfg', '/change', 'processor-throttle-ac', '0',
-                'powercfg', '/change', 'processor-throttle-dc', '0',
-                'powercfg', '/change', 'processor-maximum-frequency-ac', str(frequency_mhz * 1000),
-                'powercfg', '/change', 'processor-maximum-frequency-dc', str(frequency_mhz * 1000)
-            ], check=True)
-            
+                with open(scaling_max_path, 'w') as f:
+                    f.write(str(frequency_khz))
+                with open(scaling_min_path, 'w') as f:
+                    f.write(str(frequency_khz))
+                    
             return True
             
         except Exception as e:
@@ -100,23 +110,40 @@ class CPUControl:
             return False
             
     def get_current_cpu_state(self) -> Dict:
-        """
-        获取当前CPU状态
+        """获取当前CPU状态
         
         Returns:
             Dict: CPU状态信息
         """
         try:
-            cpu = self.wmi.Win32_Processor()[0]
+            # 使用lscpu获取CPU信息
+            lscpu_output = subprocess.check_output(['lscpu']).decode()
+            cpu_info = {}
+            
+            for line in lscpu_output.split('\n'):
+                if ':' in line:
+                    key, value = line.split(':', 1)
+                    cpu_info[key.strip()] = value.strip()
+                    
+            # 获取CPU负载
+            with open('/proc/loadavg', 'r') as f:
+                load = f.read().split()
+                
+            # 获取当前频率
+            cpu0_freq_path = self.cpu_dirs[0] / 'cpufreq/scaling_cur_freq'
+            with open(cpu0_freq_path, 'r') as f:
+                current_freq = int(f.read().strip()) // 1000  # 转换为MHz
+                
             return {
-                'name': cpu.Name,
-                'current_frequency': cpu.CurrentClockSpeed,
-                'max_frequency': cpu.MaxClockSpeed,
-                'min_frequency': cpu.MinClockSpeed,
-                'load_percentage': cpu.LoadPercentage,
-                'number_of_cores': cpu.NumberOfCores,
-                'number_of_logical_processors': cpu.NumberOfLogicalProcessors
+                'name': cpu_info.get('Model name', 'Unknown'),
+                'current_frequency': current_freq,
+                'max_frequency': int(cpu_info.get('CPU max MHz', '0').split('.')[0]),
+                'min_frequency': int(cpu_info.get('CPU min MHz', '0').split('.')[0]),
+                'load_percentage': float(load[0]) * 100,
+                'number_of_cores': int(cpu_info.get('CPU(s)', '1')),
+                'number_of_logical_processors': int(cpu_info.get('Thread(s) per core', '1')) * int(cpu_info.get('Core(s) per socket', '1'))
             }
+            
         except Exception as e:
             self.logger.error(f"获取CPU状态失败: {str(e)}")
             return {} 
